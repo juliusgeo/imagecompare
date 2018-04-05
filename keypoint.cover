@@ -1,0 +1,265 @@
+    1: from PIL import Image, ImageFilter, ImageChops, ImageOps, ImageDraw, ImageFont
+    1: import matplotlib.pyplot as plt
+    1: import numpy as np
+       
+       
+       # finds the Dimensional Invariant Similarity Measure https://arxiv.org/ftp/arxiv/papers/1409/1409.0923.pdf
+    1: def bdistance(l1, l2):
+  400:     b = []
+102800:     for i in range(len(l1)):
+102400:         c = (1 + min([l1[i], l2[i]])) / (1 + max([l1[i], l2[i]]))
+102400:         b.append(c)
+  400:     return np.mean(b)
+       
+       
+    1: def shift_l(l, shift, empty=0):
+           src_index = max(-shift, 0)
+           dst_index = max(shift, 0)
+           length = max(len(l) - abs(shift), 0)
+           new = [empty] * len(l)
+           new[dst_index:dst_index + length] = l[src_index:src_index + length]
+           return new
+       
+       
+       # finds the average of the input coordinate array
+    1: def avgOfCoords(arr):
+  197:     if (arr != [] and arr.ndim > 1):
+  197:         return np.mean(arr[:, 0]), np.mean(arr[:, 1])
+           else:
+               return [0, 0]
+       
+       
+       # finds the sum of gradient values around the point to find the hessian
+    1: def sumHessian(arr, center, r):
+ 4809:     x = center[0]
+ 4809:     y = center[1]
+ 4809:     return np.sum(arr[x - r:x + r, y - r:y + r])
+       
+       
+       # returns an image that is the difference of gaussian blurs at r and 2r
+    1: def differenceOfGaussians(im, r):
+    2:     newim = ImageChops.invert(ImageChops.subtract(im.filter(ImageFilter.GaussianBlur(radius=2 * r)),
+    2:                                                   im.filter(ImageFilter.GaussianBlur(radius=r))))
+    2:     return newim
+       
+       
+       # adapted Harris corner detector
+    1: def isCorner(a, b, c, coord, im, r):
+ 1603:     x = coord[0]
+ 1603:     y = coord[1]
+ 1603:     m = np.asarray([[a, b], [b, c]])
+ 1603:     bigr = np.linalg.det(m) - (.05 * (np.trace(m) ** 2))
+ 1603:     if (bigr > 10000):
+  518:         total = 0
+  518:         t = 40
+  518:         bo = [y + r, y - r, x + r, x - r]
+  518:         circle = [im[int(x), int(bo[0])],
+  518:                   im[int(x), int(bo[1])],
+  518:                   im[int(bo[2]), int(y)],
+  518:                   im[int(bo[3]), int(y)]]
+ 2590:         for i in range(len(circle)):
+ 2072:             if (im[int(x), int(y)] > circle[i] + t or im[int(x), int(y)] > circle[i] - t):
+ 2072:                 total = total + 1
+  518:         if (total / len(circle) > .85):
+  518:             return True
+               else:
+                   return False
+           else:
+ 1085:         return False
+       
+       
+       # keypoint detector
+    1: def isKeyPoint(val, arr):
+114072:     extrema = [np.max(arr), np.min(arr)]
+114072:     if (extrema == None):
+               return False
+114072:     elif (abs(extrema[0] - extrema[1]) <= 7):
+108127:         return False
+ 5945:     elif (val == extrema[0] or val == extrema[1]):
+ 1603:         return True
+           else:
+ 4342:         return False
+       
+       
+       # finds significant keypoints
+    1: def extractKeypoints(im):
+    2:     im = im.convert('L')
+    2:     w, h = im.size
+    2:     im = differenceOfGaussians(im, 4)
+    2:     [dx, dy] = np.gradient(im)
+    2:     dxx = dx ** 2
+    2:     dyy = dy ** 2
+    2:     dxy = dx * dy
+    2:     imarray = np.asarray(im)
+           # these are initalized as python lists because that saves computational time,
+           # they're later converted back to numpy arrays
+    2:     keys = []
+    2:     corners = []
+  390:     for i in range(6, h - 6, 2):
+114460:         for n in range(6, w - 6, 2):
+114072:             if isKeyPoint(imarray[i, n], imarray[i - 4:i + 4, n - 4:n + 4]) == True:
+ 1603:                 keys.append([i, n])
+    2:     keys = np.array(keys)
+ 1605:     for z in range(len(keys)):
+ 1603:         [i, n] = keys[z, :]
+ 1603:         a = sumHessian(dxx, [i, n], 5)
+ 1603:         b = sumHessian(dxy, [i, n], 5)
+ 1603:         c = sumHessian(dyy, [i, n], 5)
+ 1603:         if isCorner(a, b, c, [i, n], imarray, 4):
+  518:             corners.append([i, n])
+    2:     return np.array(corners)
+       
+       
+       # shifts the coordinates of the two coordinate arrays so that they overlap
+    1: def shiftCoords(e, g):
+           z = np.asarray(avgOfCoords(e))
+           q = np.asarray(avgOfCoords(g))
+           [y, x] = (z - q)
+           e[:, 1] = e[:, 1] - x / 2
+           e[:, 0] = e[:, 0] + y / 2
+           return e, g
+       
+       
+       # clusters keypoints by radius r
+    1: def cluster(arr, r):
+    2:     newarr = []
+  125:     while len(arr) > 1:
+  123:         center = arr[0][:]
+  123:         box = [center]
+  123:         outbox = []
+17875:         for i in range(1, len(arr)):
+17752:             te = arr[i][:]
+17752:             d = np.sum(np.square(te - center))
+17752:             if (d <= r ** 2):
+  395:                 box.append(te)
+                   else:
+17357:                 outbox.append(te)
+  123:         arr = outbox
+  123:         newarr.append(avgOfCoords(np.array(box)))
+    2:     return np.array(newarr)
+       
+       
+       # defines block class
+    2: class Block:
+    1:     def __init__(self, loc, sim, slice1, slice2):
+  400:         self.loc = loc
+  400:         self.sim = sim
+  400:         self.slice1 = slice1
+  400:         self.slice2 = slice1
+       
+       
+    1: def slice(im, size, keys, ssize):
+    2:     slices = []
+    2:     boxes = []
+    2:     boxsize = [size[0] // ssize, size[1] // ssize]
+    2:     keycenters = np.empty((0, 2), int)
+   42:     for i in range(0, ssize):
+  840:         for n in range(0, ssize):
+  800:             box = [(boxsize[0] * i), (boxsize[1] * n), (boxsize[0] * (i + 1) + 1), (boxsize[1] * (n + 1)) + 1]
+  800:             keys = np.array(keys)
+  800:             inbox = np.empty((0, 2), int)
+50000:             for z in range(len(keys)):
+49200:                 if (box[0] <= keys[z, 1] <= box[2] and box[1] <= keys[z, 0] <= box[3]):
+  133:                     inbox = np.vstack((inbox, keys[z, :]))
+  800:             if (inbox.size == 0):
+  728:                 keycenters = np.vstack((keycenters, [0, 0]))
+                   else:
+   72:                 keycenters = np.vstack((keycenters, (avgOfCoords(inbox))))
+  800:             boxes.append(box)
+  800:             slices.append(im.crop(box=box))
+       
+    2:     return slices, keycenters, boxes
+       
+       
+    1: def compareImages(path1, path2, halfweight, emptyweight):
+    1:     size = 600, 400
+    1:     im1 = ImageOps.fit(Image.open(path1).convert('L'), size, Image.ANTIALIAS)
+    1:     im2 = ImageOps.fit(Image.open(path2).convert('L'), size, Image.ANTIALIAS)
+    1:     g = np.array(extractKeypoints(im1))
+    1:     e = np.array(extractKeypoints(im2))
+    1:     g = cluster(g, 10)
+    1:     e = cluster(e, 10)
+           # g = np.load('imgs/IMG_0838.npy')
+           # e = np.load('imgs/IMG_0840.npy')
+    1:     z = np.asarray(avgOfCoords(e))
+    1:     q = np.asarray(avgOfCoords(g))
+    1:     [y, x] = (z - q)
+    1:     e[:, 1] = e[:, 1] - x / 2
+    1:     e[:, 0] = e[:, 0] + y / 2
+    1:     ssize = 20
+    1:     slices1, keycenters1, boxes1 = slice(im1, size, g, ssize)
+    1:     slices2, keycenters2, boxes2 = slice(im2, size, e, ssize)
+    1:     boxsize = [size[0] // ssize, size[1] // ssize]
+    1:     diag = np.linalg.norm([boxsize[0], boxsize[1]])
+    1:     diff = []
+    1:     outliers = [True] * ssize ** 2
+  401:     for i in range(len(boxes1)):
+  400:         t = [keycenters1[i][0] == 0, keycenters1[i][1] == 0, keycenters2[i][0] == 0, keycenters2[i][1] == 0]
+  400:         if t[0] and t[1] and t[2] == False and t[3] == False:
+   16:             diff.append(halfweight)
+   16:             outliers[i] = False
+  384:         elif t[2] and t[3] and t[0] == False and t[1] == False:
+   46:             diff.append(halfweight)
+   46:             outliers[i] = False
+  338:         elif t[2] and t[3] and t[0] and t[1]:
+  333:             diff.append(emptyweight)
+               else:
+    5:             diff.append(np.linalg.norm(keycenters1[i] - keycenters2[i]) / diag)
+    1:     diff = np.asarray(diff)
+    1:     histodiffs = []
+    1:     lumdiffs = []
+    1:     condiffs = []
+    1:     blockarr = []
+  401:     for i in range(len(boxes1)):
+  400:         histo1 = slices1[i].histogram()
+  400:         histo2 = slices2[i].histogram()
+  400:         luminance1 = np.mean(np.asarray(slices1[i]))
+  400:         luminance2 = np.mean(np.asarray(slices2[i]))
+  400:         lumdiffs.append(abs(luminance1 - luminance2) / luminance1)
+  400:         stddev1 = np.std(histo1)
+  400:         stddev2 = np.std(histo2)
+  400:         condiffs.append(abs(stddev1 - stddev2) / stddev1)
+  400:         histodiffs.append(bdistance(histo1, histo2))
+  400:         blockSim = np.mean([1 - diff[i], np.mean(histodiffs), 1 - np.mean(lumdiffs), 1 - np.mean(condiffs)])
+  400:         blockarr.append(Block(boxes1[i], blockSim, slices1[i], slices2[i]))
+       
+    1:     del slices1
+    1:     del slices2
+           # print("similarity including blank sections:", 1-np.average(diff))
+           # print("similarity excluding blank sections:", 1-np.average(diff[diff != emptyweight]))
+    1:     withoutoutliers = 1 - diff[np.array(outliers)]
+           # print("similarity including blank sections and excluding outliers:", np.mean(withoutoutliers))
+           # print("mean of histogram similarity", np.mean(histodiffs))
+    1:     avgofsims = np.mean(
+    1:         [1 - np.average(diff), 1 - np.average(diff[diff != emptyweight]), np.mean(withoutoutliers), np.mean(histodiffs),
+    1:          1 - np.mean(lumdiffs), 1 - np.mean(condiffs)])
+    1:     print("mean of all methods:", avgofsims)
+       
+    1:     return blockarr
+           plt.scatter(x=keycenters1[:, 1], y=keycenters1[:, 0], c='b', s=3)
+           plt.scatter(x=keycenters2[:, 1], y=keycenters2[:, 0], c='r', s=3)
+           plt.show()
+           # plot = plt.imshow(im1)
+       
+       
+    1: path1 = "imgs/IMG_0838.jpeg"
+    1: path2 = "imgs/lamp.JPG"
+       # cProfile.run('compareImages(path1, path2, 1, 0)')
+    1: blocks = compareImages(path1, path2, 1, 0)
+    1: im1 = ImageOps.fit(Image.open(path1), [600, 400], Image.ANTIALIAS)
+    1: im2 = ImageOps.fit(Image.open(path2), [600, 400], Image.ANTIALIAS)
+    1: print(im1.size)
+       
+    1: blank = Image.new('RGB', [600, 400])
+    1: draw1 = ImageDraw.Draw(blank, 'RGBA')
+  402: simsarr = [blocks[i].sim for i in range(0, len(blocks))]
+ 2402: locs = [[blocks[i].loc[k] * 1 for k in range(0, 4)] for i in range(0, len(blocks))]
+    1: delta = max(simsarr) - min(simsarr)
+  402: simsarr = [simsarr[i] - min(simsarr) for i in range(len(simsarr))]
+  402: m = [simsarr[i] / delta for i in range(0, len(simsarr))]
+    1: fnt = ImageFont.truetype('OpenSans-Bold.ttf', 10)
+  401: for i in range(0, len(blocks)):
+  400:     blank.paste(blocks[i].slice1, box=blocks[i].loc)
+  400:     draw1.rectangle(locs[i], fill=(200, 0, 0, int(((1 - m[i]) + .1) * 255)), outline=None)
+           # draw1.text((locs[i][0],locs[i][1]), str(round(m[i],2)), font=fnt, fill=(255, 255, 255, 100))
+    1: blank.show()
